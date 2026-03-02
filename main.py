@@ -170,7 +170,7 @@ app.add_middleware(
 
 
 @app.post(
-    "/upload-receipt",
+    "/upload",
     response_model=Bloček,
     summary="Nahraj obrázok bločku a získaj štruktúrované dáta",
 )
