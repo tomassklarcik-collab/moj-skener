@@ -162,14 +162,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://*.vercel.app",
-        "https://*.vercel.sh",
-        # Pre lokálny vývoj:
-        "http://localhost:3000",
-        "http://localhost:5173",
-    ],
-    allow_origin_regex=r"https://.*\.vercel\.app",
+    allow_origins=["*"],  # Toto povolí prístup z akejkoľvek adresy (vrátane tvojho GitHubu)
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
