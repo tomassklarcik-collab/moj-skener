@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="sk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>BločekScan AI</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
+        .font-mono { font-family: 'JetBrains+Mono', monospace; }
+        .safe-area-inset-bottom { padding-bottom: env(safe-area-inset-bottom); }
+    </style>
+</head>
+<body class="bg-zinc-950 text-zinc-100">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useRef, useCallback, useEffect } = React;
+
+        const API_BASE = "https://moj-skener.onrender.com";
+
+        // --- KOMPONENTY Z TVOJHO APP.JSX ---
+        
+        function Skeleton({ className = "" }) {
+            return <div className={`animate-pulse rounded-lg bg-zinc-800 ${className}`} aria-hidden="true" />;
+        }
+
+        function ReceiptSkeleton() {
+            return (
+                <div className="space-y-4 p-4">
+                    <Skeleton className="h-6 w-2/3" />
+                    <Skeleton className="h-4 w-1/3" />
+                    <div className="mt-6 space-y-3">
+                        {[1, 2, 3].map((i) => (
+                            <div key={i} className="rounded-xl bg-zinc-900 p-4 space-y-2">
+                                <Skeleton className="h-4 w-3/4" />
+                                <div className="flex gap-3">
+                                    <Skeleton className="h-4 w-1/4" />
+                                    <Skeleton className="h-4 w-1/4" />
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            );
+        }
+
+        function EditableField({ label, value, onChange, type = "text", prefix = "" }) {
+            const [focused, setFocused] = useState(false);
+            return (
+                <div className="flex flex-col gap-1">
+                    <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-mono">{label}</label>
+                    <div className={`flex items-center gap-1 rounded-lg border px-3 py-2 transition-all duration-200 ${focused ? "border-amber-400 bg-zinc-800 shadow-[0_0_0_2px_rgba(251,191,36,0.15)]" : "border-zinc-700 bg-zinc-900"}`}>
+                        {prefix && <span className="text-zinc-500 text-sm font-mono">{prefix}</span>}
+                        <input
+                            type={type}
+                            value={value || ""}
+                            onChange={(e) => onChange(type === "number" ? parseFloat(e.target.value) || 0 : e.target.value)}
+                            onFocus={() => setFocused(true)}
+                            onBlur={() => setFocused(false)}
+                            className="w-full bg-transparent text-sm text-zinc-100 outline-none font-mono"
+                            step="0.01"
+                        />
+                    </div>
+                </div>
+            );
+        }
+
+        function ItemCard({ item, index, onUpdate, onRemove }) {
+            const [expanded, setExpanded] = useState(false);
+            const update = (key, val) => onUpdate(index, { ...item, [key]: val });
+            return (
+                <div className="rounded-xl border border-zinc-800 bg-zinc-900 overflow-hidden mb-2">
+                    <button onClick={() => setExpanded(!expanded)} className="w-full flex items-center justify-between px-4 py-3">
+                        <div className="flex-1 min-w-0 text-left">
+                            <p className="text-sm font-medium truncate">{item.nazov || "—"}</p>
+                            <p className="text-xs text-zinc-500 font-mono mt-0.5">{item.suma_s_dph?.toFixed(2)} €</p>
+                        </div>
+                        <span className="text-amber-400 font-mono text-xs">{expanded ? "▴" : "▾"}</span>
+                    </button>
+                    {expanded && (
+                        <div className="px-4 pb-4 border-t border-zinc-800 pt-3 space-y-3">
+                            <EditableField label="Názov" value={item.nazov} onChange={(v) => update("nazov", v)} />
+                            <div className="grid grid-cols-2 gap-3">
+                                <EditableField label="Suma s DPH" value={item.suma_s_dph} onChange={(v) => update("suma_s_dph", v)} type="number" prefix="€" />
+                                <EditableField label="Sadzba DPH" value={item.dph_sadzba_percento} onChange={(v) => update("dph_sadzba_percento", v)} type="number" prefix="%" />
+                            </div>
+                            <button onClick={() => onRemove(index)} className="text-xs text-red-500 font-mono">✕ Odstrániť</button>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        function ImagePreview({ src }) {
+            const [expanded, setExpanded] = useState(false);
+            return (
+                <div className="px-4 mb-4">
+                    <div onClick={() => setExpanded(!expanded)} className={`relative overflow-hidden rounded-xl border border-zinc-800 transition-all ${expanded ? "h-64" : "h-20"}`}>
+                        <img src={src} className="w-full h-full object-cover" />
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent flex items-end p-2 text-[10px] text-zinc-400 font-mono">
+                            {expanded ? "▴ Skryť náhľad" : "▾ Zobraziť bloček"}
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // --- HLAVNÁ APLIKÁCIA ---
+
+        function App() {
+            const fileInputRef = useRef(null);
+            const [state, setState] = useState("idle");
+            const [receipt, setReceipt] = useState(null);
+            const [imagePreview, setImagePreview] = useState(null);
+            const [capturedFile, setCapturedFile] = useState(null);
+
+            const handleCapture = async (e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                setCapturedFile(file);
+                setImagePreview(URL.createObjectURL(file));
+                setState("loading");
+
+                try {
+                    const form = new FormData();
+                    form.append("file", file);
+                    const res = await fetch(`${API_BASE}/upload`, { method: "POST", body: form });
+                    if (!res.ok) throw new Error("Chyba servera");
+                    const data = await res.json();
+                    setReceipt(data);
+                    setState("review");
+                } catch (err) {
+                    alert("Chyba: " + err.message);
+                    setState("idle");
+                }
+            };
+
+            const handleExportXLSX = async () => {
+                setState("exporting");
+                try {
+                    const form = new FormData();
+                    form.append("file", capturedFile);
+                    const res = await fetch(`${API_BASE}/upload/export-xlsx`, { method: "POST", body: form });
+                    const blob = await res.blob();
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = `blocek.xlsx`;
+                    a.click();
+                } catch (err) { alert("Chyba exportu"); }
+                setState("review");
+            };
+
+            return (
+                <div className="min-h-screen pb-32">
+                    <header className="sticky top-0 z-10 bg-zinc-950/80 backdrop-blur border-b border-zinc-900 px-4 py-3 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                            <span className="text-lg">🧾</span>
+                            <span className="font-mono font-bold text-sm tracking-tight">BločekScan AI</span>
+                        </div>
+                        {state === "review" && (
+                            <button onClick={() => setState("idle")} className="text-xs font-mono text-zinc-500">← Nový</button>
+                        )}
+                    </header>
+
+                    <main className="max-w-lg mx-auto pt-4">
+                        {state === "idle" && (
+                            <div className="flex flex-col items-center justify-center min-h-[60vh] px-6 text-center gap-6">
+                                <div className="w-20 h-20 rounded-3xl bg-zinc-900 border border-zinc-800 flex items-center justify-center text-3xl">📷</div>
+                                <div>
+                                    <h1 className="text-xl font-bold">Pripravený?</h1>
+                                    <p className="text-sm text-zinc-500 mt-2">Odfoť bloček a AI urobí zvyšok.</p>
+                                </div>
+                            </div>
+                        )}
+
+                        {state === "loading" && (
+                            <div className="px-4">
+                                {imagePreview && <ImagePreview src={imagePreview} />}
+                                <p className="text-xs font-mono text-amber-400 mb-4 animate-pulse text-center">Claude číta dáta...</p>
+                                <ReceiptSkeleton />
+                            </div>
+                        )}
+
+                        {state === "review" && receipt && (
+                            <div className="space-y-4">
+                                {imagePreview && <ImagePreview src={imagePreview} />}
+                                <div className="px-4">
+                                    <div className="rounded-xl border border-amber-400/20 bg-amber-400/5 p-4 space-y-3">
+                                        <EditableField label="Dodávateľ" value={receipt.dodavatel} onChange={(v) => setReceipt({...receipt, dodavatel: v})} />
+                                        <EditableField label="Dátum" value={receipt.datum} onChange={(v) => setReceipt({...receipt, datum: v})} />
+                                    </div>
+                                </div>
+                                <div className="px-4">
+                                    <p className="text-[10px] uppercase font-mono text-zinc-500 mb-2">Položky ({receipt.polozky.length})</p>
+                                    {receipt.polozky.map((item, i) => (
+                                        <ItemCard key={i} item={item} index={i} onUpdate={(idx, updated) => {
+                                            const newItems = [...receipt.polozky];
+                                            newItems[idx] = updated;
+                                            setReceipt({...receipt, polozky: newItems});
+                                        }} onRemove={(idx) => {
+                                            setReceipt({...receipt, polozky: receipt.polozky.filter((_, i) => i !== idx)});
+                                        }} />
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </main>
+
+                    <footer className="fixed bottom-0 left-0 right-0 bg-zinc-950/90 backdrop-blur border-t border-zinc-900 px-4 py-4 safe-area-inset-bottom">
+                        <div className="max-w-lg mx-auto">
+                            <input ref={fileInputRef} type="file" accept="image/*" capture="environment" onChange={handleCapture} className="hidden" />
+                            
+                            {state === "idle" && (
+                                <button onClick={() => fileInputRef.current.click()} className="w-full h-14 rounded-2xl bg-amber-400 text-black font-bold shadow-[0_0_20px_rgba(251,191,36,0.2)]">
+                                    Nasnímať bloček
+                                </button>
+                            )}
+                            
+                            {state === "loading" && (
+                                <div className="w-full h-14 rounded-2xl bg-zinc-800 flex items-center justify-center gap-3 text-zinc-500 font-mono text-sm">
+                                    Spracováva sa…
+                                </div>
+                            )}
+
+                            {state === "review" && (
+                                <div className="flex gap-3">
+                                    <button onClick={() => fileInputRef.current.click()} className="h-14 px-5 rounded-2xl bg-zinc-900 border border-zinc-700">📷</button>
+                                    <button onClick={handleExportXLSX} className="flex-1 h-14 rounded-2xl bg-amber-400 text-black font-bold">Exportovať Excel</button>
+                                </div>
+                            )}
+                        </div>
+                    </footer>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
