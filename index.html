@@ -139,22 +139,37 @@
                 }
             };
 
-            const handleExportXLSX = async () => {
-                setState("exporting");
-                try {
-                    const form = new FormData();
-                    form.append("file", capturedFile);
-                    const res = await fetch(`${API_BASE}/upload/export-xlsx`, { method: "POST", body: form });
-                    const blob = await res.blob();
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement("a");
-                    a.href = url;
-                    a.download = `blocek.xlsx`;
-                    a.click();
-                } catch (err) { alert("Chyba exportu"); }
-                setState("review");
-            };
+           const handleExportXLSX = async () => {
+    setState("exporting");
+    try {
+        // Namiesto obrázku pošleme JSON dáta, ktoré máme v stave 'receipt'
+        const res = await fetch(`${API_BASE}/export-xlsx`, { 
+            method: "POST", 
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify(receipt) // Posielame hotové dáta
+        });
 
+        if (!res.ok) throw new Error("Server nevrátil Excel");
+
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        // Pomenujeme súbor podľa dodávateľa a dátumu
+        const fileName = `blocek_${receipt.dodavatel || 'export'}_${receipt.datum || ''}.xlsx`;
+        a.download = fileName.replace(/\s+/g, '_'); 
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    } catch (err) { 
+        console.error(err);
+        alert("Chyba exportu: " + err.message); 
+    }
+    setState("review");
+};
             return (
                 <div className="min-h-screen pb-32">
                     <header className="sticky top-0 z-10 bg-zinc-950/80 backdrop-blur border-b border-zinc-900 px-4 py-3 flex items-center justify-between">
