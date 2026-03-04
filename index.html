@@ -1,197 +1,442 @@
+
+Index · HTML
+Copy
+
 <!DOCTYPE html>
 <html lang="sk">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>BločekScan AI</title>
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        body { background-color: #09090b; color: #f4f4f5; }
-        .safe-area-bottom { padding-bottom: env(safe-area-inset-bottom); }
-    </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>BločekScan AI</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body { background: #09090b; color: #f4f4f5; margin: 0; font-family: system-ui, sans-serif; }
+    input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
+    .pb-safe { padding-bottom: max(16px, env(safe-area-inset-bottom)); }
+  </style>
 </head>
 <body>
-    <div id="root"></div>
+  <div id="root"></div>
 
-    <script type="text/babel">
-        const { useState, useRef } = React;
-        const API_BASE = "https://moj-skener.onrender.com";
+  <script type="text/babel">
+    const { useState, useRef, useCallback } = React;
 
-        function App() {
-            const [state, setState] = useState("idle"); // idle, loading, review, exporting
-            const [receipt, setReceipt] = useState(null);
-            const fileInputRef = useRef(null);
+    // ─── ZMEŇ TOTO ak máš inú URL backendu ──────────────────────────────────
+    const API_BASE = "https://moj-skener.onrender.com";
+    // ────────────────────────────────────────────────────────────────────────
 
-            const handleUpload = async (e) => {
-                const file = e.target.files[0];
-                if (!file) return;
+    /* ── Skeleton loader ── */
+    function Skeleton({ cls = "" }) {
+      return <div className={`animate-pulse rounded-lg bg-zinc-800 ${cls}`} />;
+    }
+    function ReceiptSkeleton() {
+      return (
+        <div className="space-y-3 p-4">
+          <Skeleton cls="h-6 w-2/3" />
+          <Skeleton cls="h-4 w-1/3" />
+          {[1,2,3].map(i => (
+            <div key={i} className="rounded-xl bg-zinc-900 p-4 space-y-2">
+              <Skeleton cls="h-4 w-3/4" />
+              <div className="flex gap-3">
+                <Skeleton cls="h-4 w-1/4" />
+                <Skeleton cls="h-4 w-1/4" />
+              </div>
+            </div>
+          ))}
+        </div>
+      );
+    }
 
-                setState("loading");
-                const formData = new FormData();
-                formData.append("file", file);
+    /* ── Editovateľné pole ── */
+    function Field({ label, value, onChange, type = "text", prefix = "" }) {
+      const [focused, setFocused] = useState(false);
+      return (
+        <div className="flex flex-col gap-1">
+          <label style={{ fontSize: 10, letterSpacing: "0.1em" }} className="uppercase text-zinc-500 font-mono">
+            {label}
+          </label>
+          <div className={`flex items-center gap-1 rounded-lg border px-3 py-2 transition-all ${
+            focused ? "border-amber-400 bg-zinc-800 shadow-[0_0_0_2px_rgba(251,191,36,0.15)]"
+                    : "border-zinc-700 bg-zinc-900"
+          }`}>
+            {prefix && <span className="text-zinc-500 text-sm font-mono">{prefix}</span>}
+            <input
+              type={type}
+              value={value ?? ""}
+              step={type === "number" ? "0.01" : undefined}
+              onChange={e => onChange(type === "number" ? parseFloat(e.target.value) || 0 : e.target.value)}
+              onFocus={() => setFocused(true)}
+              onBlur={() => setFocused(false)}
+              className="w-full bg-transparent text-sm text-zinc-100 outline-none font-mono"
+            />
+          </div>
+        </div>
+      );
+    }
 
-                try {
-                    const response = await fetch(`${API_BASE}/upload`, {
-                        method: "POST",
-                        body: formData
-                    });
+    /* ── Karta položky (akordeon) ── */
+    function ItemCard({ item, index, onUpdate, onRemove }) {
+      const [open, setOpen] = useState(false);
+      const set = (k, v) => onUpdate(index, { ...item, [k]: v });
+      return (
+        <div className="rounded-xl border border-zinc-800 bg-zinc-900 overflow-hidden">
+          <button onClick={() => setOpen(o => !o)}
+            className="w-full flex items-center justify-between px-4 py-3 text-left">
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-zinc-100 truncate">{item.nazov || "—"}</p>
+              <p className="text-xs text-zinc-500 font-mono mt-0.5">
+                {item.suma_s_dph?.toFixed(2)} € · DPH {item.dph_sadzba_percento}%
+              </p>
+            </div>
+            <div className="flex items-center gap-2 ml-3 shrink-0">
+              <span className="text-xs font-mono font-semibold text-amber-400">
+                {item.suma_s_dph?.toFixed(2)} €
+              </span>
+              <span className="text-zinc-500" style={{ transition: "transform .2s", transform: open ? "rotate(180deg)" : "none" }}>▾</span>
+            </div>
+          </button>
+          {open && (
+            <div className="px-4 pb-4 border-t border-zinc-800 pt-3 space-y-3">
+              <Field label="Názov položky" value={item.nazov} onChange={v => set("nazov", v)} />
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Suma s DPH" value={item.suma_s_dph} onChange={v => set("suma_s_dph", v)} type="number" prefix="€" />
+                <Field label="Suma bez DPH" value={item.suma_bez_dph} onChange={v => set("suma_bez_dph", v)} type="number" prefix="€" />
+                <Field label="Výška DPH" value={item.dph_vyska} onChange={v => set("dph_vyska", v)} type="number" prefix="€" />
+                <Field label="Sadzba DPH" value={item.dph_sadzba_percento} onChange={v => set("dph_sadzba_percento", v)} type="number" prefix="%" />
+              </div>
+              <button onClick={() => onRemove(index)}
+                className="text-xs text-red-500 hover:text-red-400 font-mono">
+                ✕ Odstrániť položku
+              </button>
+            </div>
+          )}
+        </div>
+      );
+    }
 
-                    if (!response.ok) throw new Error("Server neodpovedá správne");
-                    
-                    const data = await response.json();
-                    setReceipt(data);
-                    setState("review");
-                } catch (err) {
-                    alert("Chyba pri nahrávaní: " + err.message);
-                    setState("idle");
-                }
-                e.target.value = ""; // reset inputu
-            };
+    /* ── Toast notifikácia ── */
+    function Toast({ msg, type, onClose }) {
+      return (
+        <div role="alert" style={{
+          position: "fixed", top: 16, left: "50%", transform: "translateX(-50%)",
+          zIndex: 99, display: "flex", alignItems: "center", gap: 8,
+          borderRadius: 999, padding: "8px 16px", fontSize: 13, fontFamily: "monospace",
+          background: type === "error" ? "#450a0a" : "#052e16",
+          border: `1px solid ${type === "error" ? "#b91c1c" : "#166534"}`,
+          color: type === "error" ? "#fca5a5" : "#86efac",
+          boxShadow: "0 4px 24px rgba(0,0,0,.5)", whiteSpace: "nowrap"
+        }}>
+          <span>{type === "error" ? "⚠" : "✓"}</span>
+          <span>{msg}</span>
+          <button onClick={onClose} style={{ marginLeft: 8, opacity: .6, background: "none", border: "none", cursor: "pointer", color: "inherit" }}>×</button>
+        </div>
+      );
+    }
 
-            const handleExport = async () => {
-                if (!receipt) return;
-                setState("exporting");
-                try {
-                    const response = await fetch(`${API_BASE}/export-xlsx`, {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify(receipt)
-                    });
+    /* ── Hlavná appka ── */
+    function App() {
+      const fileRef = useRef(null);
+      const [phase, setPhase] = useState("idle"); // idle | loading | review | exporting
+      const [receipt, setReceipt] = useState(null);
+      const [preview, setPreview] = useState(null);
+      const [toast, setToast] = useState(null);
+      const [webhook, setWebhook] = useState("");
+      const [showWebhook, setShowWebhook] = useState(false);
 
-                    if (!response.ok) throw new Error("Nepodarilo sa vygenerovať Excel");
+      const notify = (msg, type = "ok") => {
+        setToast({ msg, type });
+        setTimeout(() => setToast(null), 3500);
+      };
 
-                    const blob = await response.blob();
-                    const url = window.URL.createObjectURL(blob);
-                    const a = document.createElement("a");
-                    a.href = url;
-                    a.download = `blocek_${receipt.dodavatel || 'export'}.xlsx`;
-                    document.body.appendChild(a);
-                    a.click();
-                    a.remove();
-                } catch (err) {
-                    alert("Chyba exportu: " + err.message);
-                } finally {
-                    setState("review");
-                }
-            };
-
-            return (
-                <div className="min-h-screen flex flex-col font-sans">
-                    {/* Header */}
-                    <header className="p-4 border-b border-zinc-800 bg-zinc-950/50 backdrop-blur sticky top-0 z-10">
-                        <div className="max-w-md mx-auto flex justify-between items-center">
-                            <h1 className="text-amber-400 font-bold tracking-tight text-lg">🧾 BločekScan AI</h1>
-                            {state === "review" && (
-                                <button onClick={() => setState("idle")} className="text-xs text-zinc-500 font-mono">NOVÝ SKEN</button>
-                            )}
-                        </div>
-                    </header>
-
-                    {/* Main Content */}
-                    <main className="flex-1 max-w-md mx-auto w-full p-4">
-                        {state === "idle" && (
-                            <div className="flex flex-col items-center justify-center py-20 text-center space-y-6">
-                                <div className="w-24 h-24 bg-zinc-900 rounded-3xl flex items-center justify-center text-4xl shadow-xl border border-zinc-800">📷</div>
-                                <div className="space-y-2">
-                                    <h2 className="text-xl font-semibold">Pripravený na sken?</h2>
-                                    <p className="text-zinc-500 text-sm">Odfoť bloček a nechaj AI, nech ho spracuje.</p>
-                                </div>
-                            </div>
-                        )}
-
-                        {state === "loading" && (
-                            <div className="py-20 text-center space-y-4">
-                                <div className="inline-block w-8 h-8 border-4 border-amber-400 border-t-transparent rounded-full animate-spin"></div>
-                                <p className="text-amber-400 font-mono text-sm animate-pulse">Claude analyzuje dáta...</p>
-                            </div>
-                        )}
-
-                        {state === "review" && receipt && (
-                            <div className="space-y-6 pb-20">
-                                <div className="bg-zinc-900 p-4 rounded-2xl border border-zinc-800 space-y-4">
-                                    <div>
-                                        <label className="text-[10px] uppercase text-zinc-500 font-mono">Dodávateľ</label>
-                                        <input 
-                                            value={receipt.dodavatel} 
-                                            onChange={e => setReceipt({...receipt, dodavatel: e.target.value})}
-                                            className="w-full bg-transparent border-b border-zinc-800 py-1 font-medium outline-none focus:border-amber-400"
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="text-[10px] uppercase text-zinc-500 font-mono">Dátum</label>
-                                        <input 
-                                            value={receipt.datum} 
-                                            onChange={e => setReceipt({...receipt, datum: e.target.value})}
-                                            className="w-full bg-transparent border-b border-zinc-800 py-1 font-mono text-sm outline-none focus:border-amber-400"
-                                        />
-                                    </div>
-                                </div>
-
-                                <div className="space-y-2">
-                                    <h3 className="text-[10px] uppercase text-zinc-500 font-mono px-1">Položky</h3>
-                                    {receipt.polozky.map((p, i) => (
-                                        <div key={i} className="bg-zinc-900/50 p-3 rounded-xl border border-zinc-800 flex justify-between items-center text-sm">
-                                            <span className="truncate pr-4">{p.nazov}</span>
-                                            <span className="font-mono text-amber-400 whitespace-nowrap">{p.suma_s_dph.toFixed(2)} €</span>
-                                        </div>
-                                    ))}
-                                </div>
-
-                                <div className="bg-amber-400/10 border border-amber-400/20 p-4 rounded-2xl flex justify-between items-center">
-                                    <span className="text-sm font-medium">Celková suma</span>
-                                    <span className="text-xl font-bold text-amber-400 font-mono">{receipt.total_suma.toFixed(2)} €</span>
-                                </div>
-                            </div>
-                        )}
-                    </main>
-
-                    {/* Bottom Action Bar */}
-                    <footer className="fixed bottom-0 left-0 right-0 p-4 bg-zinc-950/80 backdrop-blur border-t border-zinc-900 safe-area-bottom">
-                        <div className="max-w-md mx-auto">
-                            {state === "idle" ? (
-                                <button 
-                                    onClick={() => fileInputRef.current.click()}
-                                    className="w-full bg-amber-400 hover:bg-amber-300 text-black font-bold py-4 rounded-2xl shadow-[0_0_20px_rgba(251,191,36,0.2)] transition-all"
-                                >
-                                    NASNÍMAŤ BLOČEK
-                                </button>
-                            ) : state === "review" ? (
-                                <div className="flex gap-3">
-                                    <button 
-                                        onClick={() => fileInputRef.current.click()}
-                                        className="p-4 bg-zinc-900 border border-zinc-800 rounded-2xl"
-                                    >
-                                        📷
-                                    </button>
-                                    <button 
-                                        onClick={handleExport}
-                                        disabled={state === "exporting"}
-                                        className="flex-1 bg-white text-black font-bold py-4 rounded-2xl disabled:opacity-50"
-                                    >
-                                        {state === "exporting" ? "Sťahujem..." : "STIAHNUŤ EXCEL"}
-                                    </button>
-                                </div>
-                            ) : null}
-                        </div>
-                    </footer>
-
-                    <input 
-                        type="file" 
-                        ref={fileInputRef} 
-                        onChange={handleUpload} 
-                        capture="environment" 
-                        accept="image/*" 
-                        className="hidden" 
-                    />
-                </div>
-            );
+      /* Odoslanie fotky na backend */
+      const handleCapture = useCallback(async e => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        setPreview(URL.createObjectURL(file));
+        setPhase("loading");
+        try {
+          const fd = new FormData();
+          fd.append("file", file);
+          const res = await fetch(`${API_BASE}/upload`, { method: "POST", body: fd });
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail || `HTTP ${res.status}`);
+          }
+          setReceipt(await res.json());
+          setPhase("review");
+          notify("Bloček úspešne spracovaný ✓");
+        } catch (err) {
+          setPhase("idle");
+          notify(`Chyba: ${err.message}`, "error");
         }
+        e.target.value = "";
+      }, []);
 
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
-    </script>
+      /* Aktualizácia položky */
+      const updateItem = useCallback((idx, updated) => {
+        setReceipt(r => {
+          const polozky = r.polozky.map((p, i) => i === idx ? updated : p);
+          return { ...r, polozky, total_suma: polozky.reduce((s, p) => s + (p.suma_s_dph || 0), 0) };
+        });
+      }, []);
+
+      /* Odstránenie položky */
+      const removeItem = useCallback(idx => {
+        setReceipt(r => {
+          const polozky = r.polozky.filter((_, i) => i !== idx);
+          return { ...r, polozky, total_suma: polozky.reduce((s, p) => s + (p.suma_s_dph || 0), 0) };
+        });
+      }, []);
+
+      /* Export do Excelu – posiela JSON (nie obrázok!) */
+      const handleExport = async () => {
+        if (!receipt) return;
+        setPhase("exporting");
+        try {
+          const res = await fetch(`${API_BASE}/export-xlsx`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(receipt),
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const blob = await res.blob();
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = `blocek_${receipt.dodavatel?.replace(/ /g, "_")}_${receipt.datum}.xlsx`;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          URL.revokeObjectURL(url);
+          notify("Excel stiahnutý ✓");
+        } catch (err) {
+          notify(`Chyba exportu: ${err.message}`, "error");
+        } finally {
+          setPhase("review");
+        }
+      };
+
+      /* Webhook (Google Sheets cez Zapier/Make) */
+      const handleWebhook = async () => {
+        if (!webhook || !receipt) return;
+        setPhase("exporting");
+        try {
+          const res = await fetch(webhook, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(receipt),
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          notify("Odoslané na webhook ✓");
+        } catch (err) {
+          notify(`Webhook chyba: ${err.message}`, "error");
+        } finally {
+          setPhase("review");
+        }
+      };
+
+      const reset = () => { setReceipt(null); setPreview(null); setPhase("idle"); };
+
+      /* Jazyková vlajka */
+      const flag = { sk: "🇸🇰", de: "🇩🇪", "de-AT": "🇦🇹", en: "🇬🇧", cs: "🇨🇿", fr: "🇫🇷", pl: "🇵🇱" };
+
+      return (
+        <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
+          {toast && <Toast msg={toast.msg} type={toast.type} onClose={() => setToast(null)} />}
+          <input ref={fileRef} type="file" accept="image/*" capture="environment"
+            onChange={handleCapture} style={{ display: "none" }} />
+
+          {/* HEADER */}
+          <header style={{
+            position: "sticky", top: 0, zIndex: 10,
+            background: "rgba(9,9,11,.85)", backdropFilter: "blur(12px)",
+            borderBottom: "1px solid #18181b", padding: "12px 16px",
+            display: "flex", alignItems: "center", justifyContent: "space-between"
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 18 }}>🧾</span>
+              <span style={{ fontFamily: "monospace", fontWeight: 700, fontSize: 14, letterSpacing: "-.02em" }}>BločekScan</span>
+              <span style={{
+                borderRadius: 999, background: "rgba(251,191,36,.1)", border: "1px solid rgba(251,191,36,.3)",
+                color: "#fbbf24", fontSize: 10, fontFamily: "monospace", padding: "2px 8px"
+              }}>v1.1</span>
+            </div>
+            {phase === "review" && (
+              <button onClick={reset} style={{ fontSize: 12, fontFamily: "monospace", color: "#71717a", background: "none", border: "none", cursor: "pointer" }}>
+                ← Nový sken
+              </button>
+            )}
+          </header>
+
+          {/* OBSAH */}
+          <main style={{ flex: 1, paddingBottom: 140, maxWidth: 480, margin: "0 auto", width: "100%" }}>
+
+            {/* IDLE */}
+            {phase === "idle" && (
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "65vh", padding: "24px", textAlign: "center", gap: 24 }}>
+                <div style={{ position: "relative" }}>
+                  <div style={{ width: 96, height: 96, borderRadius: 28, background: "#18181b", border: "1px solid #27272a", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 40, boxShadow: "0 8px 40px rgba(0,0,0,.5)" }}>📷</div>
+                  <div style={{ position: "absolute", bottom: -4, right: -4, width: 28, height: 28, borderRadius: 999, background: "#fbbf24", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 700, color: "#000" }}>+</div>
+                </div>
+                <div>
+                  <h1 style={{ fontSize: 20, fontWeight: 700, letterSpacing: "-.02em", margin: "0 0 8px" }}>Naskenuj bloček</h1>
+                  <p style={{ fontSize: 14, color: "#71717a", maxWidth: 280, margin: "0 auto", lineHeight: 1.5 }}>
+                    Odfot bloček a AI automaticky rozpozná všetky položky.
+                  </p>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, width: "100%", maxWidth: 320 }}>
+                  {[["🤖","AI OCR"],["✏️","Editovateľné"],["📊","Excel export"]].map(([icon, label]) => (
+                    <div key={label} style={{ borderRadius: 12, border: "1px solid #27272a", background: "#18181b", padding: "12px 8px", textAlign: "center" }}>
+                      <div style={{ fontSize: 20, marginBottom: 4 }}>{icon}</div>
+                      <div style={{ fontSize: 10, fontFamily: "monospace", color: "#71717a" }}>{label}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* LOADING */}
+            {phase === "loading" && (
+              <div style={{ padding: 16 }}>
+                {preview && (
+                  <div style={{ borderRadius: 12, overflow: "hidden", border: "1px solid #27272a", height: 80, marginBottom: 16 }}>
+                    <img src={preview} style={{ width: "100%", height: "100%", objectFit: "cover" }} alt="bloček" />
+                  </div>
+                )}
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#fbbf24", animation: "ping 1s infinite" }} />
+                  <span style={{ fontSize: 12, fontFamily: "monospace", color: "#71717a" }}>Claude spracováva bloček…</span>
+                </div>
+                <style>{`@keyframes ping { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.5;transform:scale(1.5)} }`}</style>
+                <ReceiptSkeleton />
+              </div>
+            )}
+
+            {/* REVIEW */}
+            {phase === "review" && receipt && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 16, padding: 16 }}>
+                {preview && (
+                  <div style={{ borderRadius: 12, overflow: "hidden", border: "1px solid #27272a", height: 80 }}>
+                    <img src={preview} style={{ width: "100%", height: "100%", objectFit: "cover" }} alt="bloček" />
+                  </div>
+                )}
+
+                {/* Hlavičkové dáta */}
+                <div style={{ borderRadius: 16, border: "1px solid rgba(251,191,36,.2)", background: "rgba(251,191,36,.04)", padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <span style={{ fontSize: 10, fontFamily: "monospace", color: "#71717a", textTransform: "uppercase", letterSpacing: "0.1em" }}>Hlavičkové údaje</span>
+                    {receipt.language_code && (
+                      <span style={{ borderRadius: 999, padding: "2px 10px", background: "rgba(251,191,36,.08)", border: "1px solid rgba(251,191,36,.25)", fontSize: 11, fontFamily: "monospace", color: "#fbbf24" }}>
+                        {flag[receipt.language_code] || "🌐"} {receipt.language_code}
+                      </span>
+                    )}
+                  </div>
+                  <Field label="Dodávateľ" value={receipt.dodavatel}
+                    onChange={v => setReceipt(r => ({ ...r, dodavatel: v }))} />
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                    <Field label="Dátum (ISO)" value={receipt.datum}
+                      onChange={v => setReceipt(r => ({ ...r, datum: v }))} />
+                    <Field label="Kód jazyka" value={receipt.language_code}
+                      onChange={v => setReceipt(r => ({ ...r, language_code: v }))} />
+                  </div>
+                </div>
+
+                {/* Položky */}
+                <div>
+                  <span style={{ fontSize: 10, fontFamily: "monospace", color: "#71717a", textTransform: "uppercase", letterSpacing: "0.1em", display: "block", marginBottom: 8 }}>
+                    Položky ({receipt.polozky.length})
+                  </span>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {receipt.polozky.map((item, i) => (
+                      <ItemCard key={i} item={item} index={i} onUpdate={updateItem} onRemove={removeItem} />
+                    ))}
+                  </div>
+                </div>
+
+                {/* Celková suma */}
+                <div style={{ borderRadius: 12, border: "1px solid #27272a", background: "#18181b", padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontSize: 13, color: "#a1a1aa", fontFamily: "monospace" }}>Celková suma</span>
+                  <span style={{ fontSize: 22, fontWeight: 700, fontFamily: "monospace", color: "#fbbf24" }}>
+                    {receipt.total_suma?.toFixed(2)} €
+                  </span>
+                </div>
+
+                {/* Webhook sekcia */}
+                <div>
+                  <button onClick={() => setShowWebhook(v => !v)}
+                    style={{ fontSize: 11, fontFamily: "monospace", color: "#52525b", background: "none", border: "none", cursor: "pointer" }}>
+                    {showWebhook ? "▴" : "▾"} Google Sheets webhook
+                  </button>
+                  {showWebhook && (
+                    <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+                      <input type="url" placeholder="https://hooks.zapier.com/..."
+                        value={webhook} onChange={e => setWebhook(e.target.value)}
+                        style={{ flex: 1, borderRadius: 8, background: "#18181b", border: "1px solid #3f3f46", padding: "8px 12px", fontSize: 12, fontFamily: "monospace", color: "#f4f4f5", outline: "none" }} />
+                      <button onClick={handleWebhook} disabled={!webhook}
+                        style={{ borderRadius: 8, background: "#27272a", border: "1px solid #3f3f46", padding: "8px 12px", fontSize: 11, fontFamily: "monospace", color: "#d4d4d8", cursor: "pointer", opacity: webhook ? 1 : .4 }}>
+                        Odoslať
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* EXPORTING overlay */}
+            {phase === "exporting" && (
+              <div style={{ position: "fixed", inset: 0, zIndex: 40, background: "rgba(0,0,0,.5)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <div style={{ background: "#18181b", border: "1px solid #27272a", borderRadius: 20, padding: "32px", textAlign: "center" }}>
+                  <div style={{ width: 32, height: 32, border: "2px solid #fbbf24", borderTopColor: "transparent", borderRadius: "50%", animation: "spin .8s linear infinite", margin: "0 auto 12px" }} />
+                  <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+                  <p style={{ fontSize: 13, fontFamily: "monospace", color: "#a1a1aa" }}>Exportujem…</p>
+                </div>
+              </div>
+            )}
+          </main>
+
+          {/* BOTTOM BAR */}
+          <div style={{
+            position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 20,
+            background: "rgba(9,9,11,.92)", backdropFilter: "blur(12px)",
+            borderTop: "1px solid #18181b", padding: "16px",
+            paddingBottom: "max(16px, env(safe-area-inset-bottom))"
+          }}>
+            <div style={{ maxWidth: 480, margin: "0 auto" }}>
+              {phase === "idle" && (
+                <button onClick={() => fileRef.current?.click()}
+                  style={{ width: "100%", height: 56, borderRadius: 16, background: "#fbbf24", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 10, fontWeight: 700, fontSize: 15, color: "#000", boxShadow: "0 0 30px rgba(251,191,36,.3)" }}>
+                  <span style={{ fontSize: 20 }}>📷</span> Nasnímať bloček
+                </button>
+              )}
+              {phase === "loading" && (
+                <div style={{ width: "100%", height: 56, borderRadius: 16, background: "#27272a", display: "flex", alignItems: "center", justifyContent: "center", gap: 12, color: "#71717a", fontFamily: "monospace", fontSize: 13 }}>
+                  <div style={{ width: 16, height: 16, border: "2px solid #3f3f46", borderTopColor: "#fbbf24", borderRadius: "50%", animation: "spin .8s linear infinite" }} />
+                  Spracováva sa…
+                </div>
+              )}
+              {phase === "review" && (
+                <div style={{ display: "flex", gap: 12 }}>
+                  <button onClick={() => fileRef.current?.click()}
+                    style={{ height: 56, padding: "0 20px", borderRadius: 16, border: "1px solid #3f3f46", background: "#18181b", cursor: "pointer", fontSize: 22 }}
+                    title="Nový sken">📷
+                  </button>
+                  <button onClick={handleExport}
+                    style={{ flex: 1, height: 56, borderRadius: 16, background: "#fbbf24", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontWeight: 700, fontSize: 14, color: "#000", boxShadow: "0 0 30px rgba(251,191,36,.3)" }}>
+                    <span>📊</span> Exportovať Excel
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
 </body>
 </html>
